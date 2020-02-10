@@ -8,21 +8,19 @@ import fewshot_re_kit
 
 class Learner(nn.Module):
 
-    def __init__(self, word_vec_mat, word2id, max_length, word_embedding_dim=50,
+    def __init__(self, word_vec_mat, word2id, args, word_embedding_dim=50,
             pos_embedding_dim=5):
         nn.Module.__init__(self)
-        self.max_length = max_length
+        self.max_length = args.max_length
         self.word2id = word2id
-        self.embedding = network.embedding.Embedding(word_vec_mat, max_length,
+        self.embedding = network.embedding.Embedding(word_vec_mat, args.max_length,
                 word_embedding_dim, pos_embedding_dim)
         self.vars = nn.ParameterList()
 
-        self.n_way = 5
+        self.n_way = args.n_way
         self.feature_dim = 60
         self.filter_num = 128
 
-        # kernel size = 2
-        # [ch_out, ch_in, kernelsz, kernelsz]
         for filter_size in [2,3,4,5]:
             w = nn.Parameter(torch.ones(self.filter_num,1,filter_size,self.feature_dim))  # [64,1,3,3]]
             torch.nn.init.kaiming_normal_(w)
@@ -55,7 +53,6 @@ class Learner(nn.Module):
         x = x.unsqueeze(dim=1)
 
         idx = 0
-        bn_idx = 0
 
         xs = []
         for _ in range(4):

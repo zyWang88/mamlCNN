@@ -26,7 +26,7 @@ def main():
     parser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     parser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
 
-    parser.add_argument('--max_length', default=64, type=int,
+    parser.add_argument('--max_length', default=128, type=int,
                         help='max length')
     parser.add_argument('--epoch', type=int, help='epoch number', default=20)
 
@@ -34,26 +34,20 @@ def main():
                         help='NA rate (NA = Q * na_rate)')
 
     args = parser.parse_args()
-    N = args.n_way
-    K = args.k_spt
-    Q = args.k_qry
-    task_num = args.task_num
-    max_length = args.max_length
     try:
         glove_mat = np.load('./pretrain/glove/glove_mat.npy')
         glove_word2id = json.load(open('./pretrain/glove/glove_word2id.json'))
     except:
         raise Exception("Cannot find glove files. Run glove/download_glove.sh to download glove files.")
-
     tokenizer = Tokenizer(
         glove_word2id,
-        max_length)
+        args.max_length)
     train_data_loader = get_loader(args.train, tokenizer,
-                                   N=N, K=K, Q=Q, na_rate=args.na_rate, batch_size=task_num)
+                                   N=args.n_way, K=args.k_spt, Q=args.k_qry, na_rate=args.na_rate, batch_size=args.task_num)
     val_data_loader = get_loader(args.val, tokenizer,
-                    N=N, K=K, Q=Q, na_rate=args.na_rate, batch_size=task_num)
+                    N=args.n_way, K=args.k_spt, Q=args.k_qry, batch_size=args.task_num)
 
-    maml = Meta(args, glove_mat, glove_word2id, max_length)  # 网络层
+    maml = Meta(args, glove_mat, glove_word2id)  # 网络层
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
     print(maml)
@@ -90,8 +84,6 @@ def main():
                 for x_spt_one, y_spt_one, x_qry_one, y_qry_one in zip(x_spt, y_spt, x_qry, y_qry ):  #[N,K,MAXLEN]
                     test_acc = maml.finetunning(x_spt_one, y_spt_one, x_qry_one, y_qry_one)
                     accs.append(test_acc)
-
-
             accs = np.array(accs).mean(axis=0).astype(np.float16)
             print('Test acc:', accs)
 

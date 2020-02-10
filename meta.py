@@ -14,7 +14,7 @@ class Meta(nn.Module):
     """
     Meta Learner
     """
-    def __init__(self,args,glove_mat,glove_word2id,max_length):
+    def __init__(self,args,glove_mat,glove_word2id):
         super(Meta, self).__init__()
         self.update_lr = args.update_lr
         self.meta_lr = args.meta_lr
@@ -25,8 +25,8 @@ class Meta(nn.Module):
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
 
-        self.net = Learner(glove_mat,glove_word2id,max_length)
-        self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
+        self.net = Learner(glove_mat,glove_word2id,args)
+        self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  #换成SGD
 
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
