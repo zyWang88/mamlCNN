@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import math
+from transformers import BertTokenizer, BertModel
 
-class Embedding(nn.Module):
+class GloveEmbedding(nn.Module):
 
     def __init__(self, word_vec_mat, max_length, word_embedding_dim=50, pos_embedding_dim=5):
         nn.Module.__init__(self)
@@ -40,4 +38,20 @@ class Embedding(nn.Module):
                             self.pos2_embedding(pos2)], 2)
         return x
 
+
+class BERTSentenceEmbedding(nn.Module):
+
+    def __init__(self, pretrain_path, max_length):
+        nn.Module.__init__(self)
+        self.bert = BertModel.from_pretrained(pretrain_path)
+
+        self.max_length = max_length
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+    def forward(self, inputs):
+        inputs = inputs.view(-1, self.max_length * 2)
+        word, mask = inputs.chunk(2, 1)  # [5,5,128]
+        inputs = {'word': word, 'mask': mask}
+        net, x = self.bert(inputs['word'], attention_mask=inputs['mask'])
+        return net
 

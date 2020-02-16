@@ -6,7 +6,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch import optim
 import numpy as np
 
-from learner import Learner
+from learner import Learner,BertLearner
 from copy import deepcopy
 
 
@@ -14,7 +14,7 @@ class Meta(nn.Module):
     """
     Meta Learner
     """
-    def __init__(self,args,glove_mat,glove_word2id):
+    def __init__(self,args,glove_mat=None,glove_word2id=None):
         super(Meta, self).__init__()
         self.update_lr = args.update_lr
         self.meta_lr = args.meta_lr
@@ -24,32 +24,31 @@ class Meta(nn.Module):
         self.task_num = args.task_num
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
-
-        self.net = Learner(glove_mat,glove_word2id,args)
+        if args.embedding == 'glove':
+            self.net = Learner(glove_mat,glove_word2id,args)
+        else:
+            self.net = BertLearner(args.max_length,args.n_way)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  #换成SGD
 
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
 
-        :param x_spt:    [B,N,K,MAXLEN]
-        :param y_spt:   [B, N*K]
-        :param x_qry:
-        :param y_qry:
+        :param x_spt:   [b, setsz, c_, h, w]   [B,N,K,MAXLEN]
+        :param y_spt:   [b, setsz]
+        :param x_qry:   [b, querysz, c_, h, w]
+        :param y_qry:   [b, querysz]
         :return:
         """
-        task_num = x_spt.size()[0]
-        # setsz = x_spt.size()[1]*x_spt.size()[2]
+        task_num = x_spt.size(0)
         querysz = x_qry.size(1)
-
         losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
         corrects = [0 for _ in range(self.update_step + 1)]
-
         for i in range(task_num):
-
             # 1. run the i-th task and compute loss for k=0
             logits = self.net(x_spt[i], vars=None)
             loss = F.cross_entropy(logits, y_spt[i].long())
             grad = torch.autograd.grad(loss, self.net.parameters())
+            # pdb.set_trace()
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
 
             # this is the loss and accuracy before first update
@@ -92,23 +91,19 @@ class Meta(nn.Module):
                     pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                     correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
                     corrects[k + 1] = corrects[k + 1] + correct
-
         # end of all tasks
         # sum over all losses on query set across all tasks
         loss_q = losses_q[-1] / task_num
-
         # optimize theta parameters
         self.meta_optim.zero_grad()
         loss_q.backward()
         # print('meta update')
+        # print(loss_q.item())
         # for p in self.net.parameters()[:5]:
         # 	print(torch.norm(p).item())
         self.meta_optim.step()
-
-
         accs = np.array(corrects) / (querysz * task_num)
-
-        return accs
+        return accs, loss_q.item()
 
     def finetunning(self, x_spt, y_spt, x_qry, y_qry):
         """
