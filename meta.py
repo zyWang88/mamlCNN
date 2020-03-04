@@ -5,9 +5,9 @@ from torch.nn import functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torch import optim
 import numpy as np
-
-from learner import Learner,BertLearner
+import pdb
 from copy import deepcopy
+from learner import Learner,BertLearner,AlbertLearner
 
 
 class Meta(nn.Module):
@@ -25,17 +25,21 @@ class Meta(nn.Module):
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
         if args.embedding == 'glove':
+            print("loading glove embedding")
             self.net = Learner(glove_mat,glove_word2id,args)
+        elif args.embedding == 'bert':
+            print("loading bert embedding")
+            self.net = BertLearner(args.max_length,args.n_way,args.type)
         else:
-            self.net = BertLearner(args.max_length,args.n_way)
+            print("loading albert embedding")
+            self.net = AlbertLearner(args.max_length,args.n_way)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  #换成SGD
-
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
 
-        :param x_spt:   [b, setsz, c_, h, w]   [B,N,K,MAXLEN]
-        :param y_spt:   [b, setsz]
-        :param x_qry:   [b, querysz, c_, h, w]
+        :param x_spt:    [B,N,K,MAXLEN]
+        :param y_spt:
+        :param x_qry:
         :param y_qry:   [b, querysz]
         :return:
         """
@@ -48,7 +52,6 @@ class Meta(nn.Module):
             logits = self.net(x_spt[i], vars=None)
             loss = F.cross_entropy(logits, y_spt[i].long())
             grad = torch.autograd.grad(loss, self.net.parameters())
-            # pdb.set_trace()
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
 
             # this is the loss and accuracy before first update
@@ -97,14 +100,10 @@ class Meta(nn.Module):
         # optimize theta parameters
         self.meta_optim.zero_grad()
         loss_q.backward()
-        # print('meta update')
-        # print(loss_q.item())
-        # for p in self.net.parameters()[:5]:
-        # 	print(torch.norm(p).item())
+        # torch.nn.utils.clip_grad_value_(self.net.parameters(),)
         self.meta_optim.step()
         accs = np.array(corrects) / (querysz * task_num)
-        return accs, loss_q.item()
-
+        return accs,loss_q.item()
     def finetunning(self, x_spt, y_spt, x_qry, y_qry):
         """
 
@@ -115,9 +114,8 @@ class Meta(nn.Module):
         :return:
         """
         assert len(x_spt.shape) == 2
-        querysz = x_qry.size(1)
+        querysz = x_qry.size(0)
         corrects = [0 for _ in range(self.update_step_test + 1)]
-
         # in order to not ruin the state of running_mean/variance and bn_weight/bias
         # we finetunning on the copied model instead of self.net
         net = deepcopy(self.net)
@@ -170,10 +168,44 @@ class Meta(nn.Module):
         accs = np.array(corrects) / querysz
         return accs
 
+    def evaluate(self,x_spt, y_spt, x_qry):
+        """
 
-def main():
-    pass
+        :param x_spt:   [N, K, MAXLEN*3]
+        :param y_spt:   [setsz]
+        :param x_qry:   [querysz, c_, h, w]
+        :param y_qry:   [querysz]
+        :return:
+        """
+        assert len(x_spt.shape) == 2
+        # corrects = [0 for _ in range(self.update_step_test + 1)]
+        # in order to not ruin the state of running_mean/variance and bn_weight/bias
+        # we finetunning on the copied model instead of self.net
+        logits_qs = 0
+        for  _ in range(3):
+            net = deepcopy(self.net)
+
+            # 1. run the i-th task and compute loss for k=0
+            logits = net(x_spt)
+            loss = F.cross_entropy(logits, y_spt.long())
+            grad = torch.autograd.grad(loss, net.parameters())
+            fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, net.parameters())))
 
 
-if __name__ == '__main__':
-    main()
+            for k in range(1, self.update_step_test):
+                # 1. run the i-th task and compute loss for k=1~K-1
+                logits = net(x_spt, fast_weights)
+                loss = F.cross_entropy(logits, y_spt.long())
+                # 2. compute grad on theta_pi
+                grad = torch.autograd.grad(loss, fast_weights)
+                # 3. theta_pi = theta_pi - train_lr * grad
+                fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+
+                logits_q = net(x_qry, fast_weights)
+                logits_qs+=F.softmax(logits_q, dim=1)
+                # loss_q will be overwritten and just keep the loss_q on last update step.
+                # loss_q = F.cross_entropy(logits_q, y_qry.long())
+        del net
+        with torch.no_grad():
+            pred_q = logits_qs.argmax(dim=1)
+        return pred_q

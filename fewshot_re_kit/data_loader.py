@@ -4,7 +4,7 @@ import os
 import numpy as np
 import random
 import json
-
+from meta import Meta
 class Word2VecFewRelDataset(data.Dataset):
     """
     FewRel Dataset
@@ -164,5 +164,8 @@ def bert_getloader(name, tokenizer, N, K, Q, batch_size,
             pin_memory=True,
             num_workers=num_workers)
     return iter(data_loader)
+
+
+
 if __name__ == '__main__':
     pass
