@@ -42,7 +42,7 @@ class GloveTokenizer():
 class Berttokenizer():
     def __init__(self, max_length):
         self.max_length = max_length
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.tokenizer = BertTokenizer.from_pretrained('./bert-base-uncased/')
 
     def bert_tokenize(self, raw_tokens, pos_head, pos_tail):
         # token -> index
@@ -112,28 +112,5 @@ class Alberttokenizer():
         mask[:len(tokens)] = 1
 
         return indexed_tokens, mask
-if __name__ == '__main__':
-    import torch
 
-    item = {
-        'tokens': ["In", "June", "1987", ",", "the", "Missouri", "Highway", "and", "Transportation", "Department",
-                   "approved", "design", "location", "of", "a", "new", "four", "-", "lane", "Mississippi", "River",
-                   "bridge", "to", "replace", "the", "deteriorating", "Cape", "Girardeau", "Bridge", "."],
-        "h": ["cape girardeau bridge", "Q5034838", [[26, 27, 28]]],
-        "t": ["mississippi river", "Q1497", [[19, 20]]]
-    }
-    bert_tokenizer = Berttokenizer(64)
-    indexed_tokens, mask, e1, e2 = bert_tokenizer.bert_tokenize(item['tokens'], item['h'][2][0], item['t'][2][0])
-    print(indexed_tokens)
-    print(mask)
-    print(e1, e2)
-    indexed_tokens =torch.tensor(indexed_tokens)
-    mask = torch.tensor(mask)
-
-
-    from transformers import BertModel
-    model = BertModel.from_pretrained('D:\pythonProject\小样本学习\mamlCNN\pretrain\bert-base-uncased',output_hidden_states=True)
-
-    # with torch.no_grad():
-    #     encoded_layers
 

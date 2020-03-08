@@ -55,10 +55,12 @@ class Word2VecFewRelDataset(data.Dataset):
                     query_set.append([i,torch.cat([word,pos1,pos2])])
                 count += 1
 
+        random.shuffle(support_set)
         x_spt = [data[1] for i, data in enumerate(support_set)]
-        y_spt = [i for i in range(self.N)] * self.K
+        y_spt = [data[0] for data in support_set]
+        random.shuffle(query_set)
         x_qry = [data[1] for i, data in enumerate(query_set)]
-        y_qry = [i for i in range(self.N)] * self.Q
+        y_qry = [data[0] for data in query_set]
         a = []
         for i in range(self.K):
             a.extend(x_spt[i:len(support_set):self.K])

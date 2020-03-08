@@ -184,7 +184,7 @@ class Meta(nn.Module):
         logits_qs = 0
         for  _ in range(3):
             net = deepcopy(self.net)
-
+            net.eval()
             # 1. run the i-th task and compute loss for k=0
             logits = net(x_spt)
             loss = F.cross_entropy(logits, y_spt.long())

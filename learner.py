@@ -4,6 +4,8 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 import pdb
+
+
 class Learner(nn.Module):
 
     def __init__(self, word_vec_mat, word2id, args, word_embedding_dim=50,
@@ -119,7 +121,8 @@ class BertLearner(nn.Module):
         # [ch_out, ch_in, kernelsz, kernelsz]
         if type == "cnnLinear":
             # CNN
-            for filter_size in [2, 3, 4, 5]:
+            self.filter_sizes = [2, 3, 4, 5]
+            for filter_size in self.filter_sizes:
                 w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim))  # [64,1,3,3]]
                 torch.nn.init.kaiming_normal_(w)
                 self.vars.append(w)
@@ -132,8 +135,8 @@ class BertLearner(nn.Module):
             self.dropout = nn.Dropout(0.5)
 
             # linear
-            w = nn.Parameter(torch.ones(128, filter_dim*3))
-            self.linear = nn.Linear(filter_dim*3, 128)
+            w = nn.Parameter(torch.ones(128, filter_dim * 3))
+            self.linear = nn.Linear(filter_dim * 3, 128)
             torch.nn.init.kaiming_normal_(w)
             self.vars.append(w)
             # [ch_out]
@@ -229,41 +232,41 @@ class BertLearner(nn.Module):
             vars = self.vars
         idx = 0
         with torch.no_grad():
-            x,eh,et= self.sentence_embedding(x,return_entity=True)  # [N*K,MAXLEN,768]
+            x, eh, et = self.sentence_embedding(x, return_entity=True)  # [N*K,MAXLEN,768]
             et, eh = np.maximum(eh, et), np.minimum(eh, et)
             eh = [6 if i < 6 else i for i in eh.numpy()]
-            et = [self.max_length-10 if i > self.max_length-10 else i for i in et.numpy()]
+            et = [self.max_length - 10 if i > self.max_length - 10 else i for i in et.numpy()]
         x = x.unsqueeze(dim=1)
         xs = []
-        for _ in range(4):
+        for _ in range(len(self.filter_sizes)):
             w, b = vars[idx], vars[idx + 1]
             x1 = F.conv2d(x, w, b)  # [B, filter_num, maxlen-filtersize+1, 1]
-            x1 = x1.squeeze(3)
+            x1 = x1.squeeze(3)  #  [B, filter_num, maxlen-filtersize+1]
             idx += 2
             data = []
-            for i,item in enumerate(x1): # item [filter_num,maxlen-filtersize+1]
-                head = item.permute(1,0)[:eh[i]].permute(1,0).unsqueeze(0) # [1,filter_num,eh]
-                if eh[i]-et[i] < 6:
-                    mid = item.permute(1,0)[eh[i]:eh[i]+6].permute(1,0).unsqueeze(0)
+            for i, item in enumerate(x1):  # item [filter_num,maxlen-filtersize+1]
+                head = item.permute(1, 0)[:eh[i]].permute(1, 0).unsqueeze(0)  # [1,filter_num,eh]
+                if eh[i] - et[i] < 6:
+                    mid = item.permute(1, 0)[eh[i]:eh[i] + 6].permute(1, 0).unsqueeze(0)
                 else:
-                    mid = item.permute(1,0)[eh[i]:et[i]].permute(1,0).unsqueeze(0)
-                tail = item.permute(1,0)[et[i]:].permute(1,0).unsqueeze(0)
+                    mid = item.permute(1, 0)[eh[i]:et[i]].permute(1, 0).unsqueeze(0)
+                tail = item.permute(1, 0)[et[i]:].permute(1, 0).unsqueeze(0)
                 try:
-                    head = F.max_pool1d(head,kernel_size=head.size(2))
-                    mid = F.max_pool1d(mid,kernel_size=mid.size(2))
-                    tail = F.max_pool1d(tail,kernel_size=tail.size(2))  # [1,filter_num,1]
+                    head = F.max_pool1d(head, kernel_size=head.size(2))
+                    mid = F.max_pool1d(mid, kernel_size=mid.size(2))
+                    tail = F.max_pool1d(tail, kernel_size=tail.size(2))  # [1,filter_num,1]
                 except:
                     print("head's shape:", head.shape)
                     print("mid's shape:", mid.shape)
                     print("tail's shape:", tail.shape)
-                    print("eh:",eh)
-                    print("et:",et)
-                data.append(torch.cat([head,mid,tail],dim=2).reshape(1,-1))  #[1,filter_num*3]
-            xs.append(torch.cat(data,dim=0))   # data[idx]: [B, filter_num*3]
+                    print("eh:", eh)
+                    print("et:", et)
+                data.append(torch.cat([head, mid, tail], dim=2).reshape(1, -1))  # [1,filter_num*3]
+            xs.append(torch.cat(data, dim=0))  # data[idx]: [B, filter_num*3]
 
-        sentence_features = torch.cat(xs,dim=1)    # batch_size x (filter_num * len(filters)*3)
+        sentence_features = torch.cat(xs, dim=1)  # batch_size x (filter_num * len(filters)*3)
 
-        x = self.dropout(sentence_features)  #[B,filter_num * len(filters)*3]
+        x = self.dropout(sentence_features)  # [B,filter_num * len(filters)*3]
         w, b = vars[idx], vars[idx + 1]
         x = F.linear(x, w, b)
         idx += 2
@@ -275,12 +278,13 @@ class BertLearner(nn.Module):
         # # make sure variable is usednvidi properly
         assert idx == len(vars)
         return x
+
     def concatForward(self, x, vars=None):
         if vars is None:
             vars = self.vars
         idx = 0
         with torch.no_grad():
-            x = self.sentence_embedding(x)  #[N*K,1536]
+            x = self.sentence_embedding(x)  # [N*K,1536]
 
         w, b = vars[idx], vars[idx + 1]
         x = F.linear(x, w, b)
@@ -297,7 +301,7 @@ class BertLearner(nn.Module):
         idx = 0
         with torch.no_grad():
             x = self.sentence_embedding(x)  # [N*K,MAXLEN,768]
-        x = x.permute(1,0,2)[0] #[N*K, 768]
+        x = x.permute(1, 0, 2)[0]  # [N*K, 768]
         w, b = vars[idx], vars[idx + 1]
         x = F.linear(x, w, b)
         idx += 2
@@ -408,4 +412,3 @@ class AlbertLearner(nn.Module):
         :return:
         """
         return self.vars
-
