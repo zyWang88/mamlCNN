@@ -1,22 +1,23 @@
 import json
 import torch
 from fewshot_re_kit.tokenizer import Berttokenizer
-import os
 import sys
 from meta import Meta
 input_filename = sys.argv[1]
-# os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 tokenizer = Berttokenizer(max_length=128)
 content = json.load(open(input_filename))
-model_path = 'best.ckpt'
+
+N = len(content[0]['meta_train'])
+K = len(content[0]['meta_train'][0])
+Q = 1
+model_path = 'model/{}way{}shot.ckpt'.format(N,K)
+
 maml = torch.load(model_path)
 
 
 preds = []
 for id,i in enumerate(content):
-    N = len(i['meta_train'])
-    K = len(i['meta_train'][0])
-    Q = 1
+
     support_set = []
     # train
     for label, items in enumerate(i['meta_train']):  #[5*5]

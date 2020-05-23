@@ -46,9 +46,9 @@ class BERTSentenceEmbedding(nn.Module):
     def __init__(self, pretrain_path, max_length):
         nn.Module.__init__(self)
         self.bert = BertModel.from_pretrained(pretrain_path)
-        for param in self.bert.parameters():
-            param.requires_grad = False
-        self.bert.eval()
+        # for param in self.bert.parameters():
+        #     param.requires_grad = False
+        # self.bert.eval()
         self.max_length = max_length
 
     def forward(self, inputs, concat=False, return_entity=False):

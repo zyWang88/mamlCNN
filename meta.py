@@ -1,14 +1,13 @@
 import torch
 from torch import nn
-from torch import optim
 from torch.nn import functional as F
-from torch.utils.data import TensorDataset, DataLoader
 from torch import optim
 import numpy as np
 import pdb
 from copy import deepcopy
-from learner import Learner,BertLearner,AlbertLearner
-
+from learner import BertLearner,Learner
+import logging
+logger = logging.getLogger(__name__)
 
 class Meta(nn.Module):
     """
@@ -26,13 +25,13 @@ class Meta(nn.Module):
         self.update_step_test = args.update_step_test
         if args.embedding == 'glove':
             print("loading glove embedding")
-            self.net = Learner(glove_mat,glove_word2id,args)
+            self.net = Learner(glove_mat,glove_word2id,args)  # 弃用
         elif args.embedding == 'bert':
             print("loading bert embedding")
             self.net = BertLearner(args.max_length,args.n_way,args.type)
-        else:
-            print("loading albert embedding")
-            self.net = AlbertLearner(args.max_length,args.n_way)
+        # else:
+        #     print("loading albert embedding")
+        #     self.net = AlbertLearner(args.max_length,args.n_way)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  #换成SGD
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """

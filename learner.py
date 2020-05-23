@@ -3,105 +3,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
+from transformers.modeling_bert import BertModel
+
 import pdb
-
-
-class Learner(nn.Module):
-
-    def __init__(self, word_vec_mat, word2id, args, word_embedding_dim=50,
-                 pos_embedding_dim=5):
-        nn.Module.__init__(self)
-        self.max_length = args.max_length
-        self.word2id = word2id
-        self.embedding = network.embedding.GloveEmbedding(word_vec_mat, args.max_length, word_embedding_dim,
-                                                          pos_embedding_dim)
-        self.vars = nn.ParameterList()
-
-        self.n_way = args.n_way
-        self.feature_dim = 60
-        self.filter_num = 128
-
-        for filter_size in [2, 3, 4, 5]:
-            w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim))  # [64,1,3,3]]
-            torch.nn.init.kaiming_normal_(w)
-            self.vars.append(w)
-            self.vars.append(nn.Parameter(torch.zeros(self.filter_num)))
-
-        filter_dim = self.filter_num * len([2, 3, 4, 5])
-        labels_num = self.n_way
-
-        # dropout
-        self.dropout = nn.Dropout(0.5)
-
-        # linear
-        w = nn.Parameter(torch.ones(labels_num, filter_dim))
-        self.linear = nn.Linear(filter_dim, labels_num)
-        torch.nn.init.kaiming_normal_(w)
-        self.vars.append(w)
-        # [ch_out]
-        self.vars.append(nn.Parameter(torch.zeros(labels_num)))
-
-    def forward(self, x, vars=None):
-        '''
-        :param x: [1,N,K,MAXLEN*3]
-        :param vars:
-        :return:
-        '''
-        if vars is None:
-            vars = self.vars
-        with torch.no_grad():
-            x = self.embedding(x)  # [N*K,MAXLEN,60]
-        x = x.unsqueeze(dim=1)
-
-        idx = 0
-
-        xs = []
-        for _ in range(4):
-            w, b = vars[idx], vars[idx + 1]
-            x1 = F.conv2d(x, w, b)
-            xs.append(torch.relu(x1.squeeze(3)))
-            idx += 2
-
-        x = [F.max_pool1d(i, kernel_size=i.size(2)).squeeze(2) for i in xs]  # x[idx]: batch_size x filter_num
-        sentence_features = torch.cat(x, dim=1)  # batch_size x (filter_num * len(filters))
-        x = self.dropout(sentence_features)
-
-        w, b = vars[idx], vars[idx + 1]
-        x = F.linear(x, w, b)
-        idx += 2
-
-        # make sure variable is used properly
-        assert idx == len(vars)
-
-        return x
-
-    def zero_grad(self, vars=None):
-        """
-
-        :param vars:
-        :return:
-        """
-        with torch.no_grad():
-            if vars is None:
-                for p in self.vars:
-                    if p.grad is not None:
-                        p.grad.zero_()
-            else:
-                for p in vars:
-                    if p.grad is not None:
-                        p.grad.zero_()
-
-    def parameters(self):
-        """
-        override this function since initial parameters will return with a generator.
-        :return:
-        """
-        return self.vars
+import logging
+logger = logging.getLogger(__name__)
 
 
 class BertLearner(nn.Module):
 
-    def __init__(self, max_length, n_way, type="cnn"):
+    def __init__(self, max_length, n_way, type="cnnLinear"):
         '''
         :param max_length:
         :param n_way:
@@ -119,7 +30,7 @@ class BertLearner(nn.Module):
         self.type = type
         # kernel size = 2
         # [ch_out, ch_in, kernelsz, kernelsz]
-        if type == "cnnLinear":
+        if type == "pcnnLinear":
             # CNN
             self.filter_sizes = [2, 3, 4, 5]
             for filter_size in self.filter_sizes:
@@ -148,6 +59,35 @@ class BertLearner(nn.Module):
             self.vars.append(w)
             self.vars.append(nn.Parameter(torch.zeros(labels_num)))
 
+        elif self.type=='cnnLinear':
+            # *************attention*****************
+            # [N*K,MAXLEN,768]
+            # w_omega = (torch.zeros(self.hidden_size * self.layer_size, self.attention_size))
+            # u_omega = Variable(torch.zeros(self.attention_size))
+
+
+            # kernel size = 2
+            # [ch_out, ch_in, kernelsz, kernelsz]
+            for filter_size in [2, 3, 4, 5]:
+                w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim),requires_grad=True)  # [64,1,3,3]]
+                torch.nn.init.kaiming_normal_(w)
+                self.vars.append(w)
+                self.vars.append(nn.Parameter(torch.zeros(self.filter_num),requires_grad=True))
+
+            filter_dim = self.filter_num * len([2, 3, 4, 5])
+            labels_num = self.n_way 
+
+            # dropout
+            self.dropout = nn.Dropout(0.5)
+
+            # linear
+            w = nn.Parameter(torch.ones(labels_num, filter_dim),requires_grad=True)
+            self.linear = nn.Linear(filter_dim, labels_num)
+            torch.nn.init.kaiming_normal_(w)
+            self.vars.append(w)
+            # [ch_out]
+            self.vars.append(nn.Parameter(torch.zeros(labels_num),requires_grad=True))
+
         # linear
         elif self.type == "concatLinear":
             w = nn.Parameter(torch.ones(self.n_way, 1536))
@@ -162,6 +102,7 @@ class BertLearner(nn.Module):
             torch.nn.init.kaiming_normal_(w)
             self.vars.append(w)
             self.vars.append(nn.Parameter(torch.zeros(self.n_way)))
+
         else:
             raise Exception("Learner type only can be cnnLinear、concatLinear、clsLinear")
 
@@ -171,8 +112,10 @@ class BertLearner(nn.Module):
         :param vars:
         :return:
         '''
-        if self.type == "cnnLinear":
-            return self.cnnForward(x, vars)
+        if self.type == "pcnnLinear":
+            return self.pcnnForward(x, vars)
+        elif self.type == "cnnLinear":
+            return self.cnnForward(x,vars)
         elif self.type == "concatLinear:":
             return self.concatForward((x, vars))
         elif self.type == "clsLinear":
@@ -201,33 +144,34 @@ class BertLearner(nn.Module):
         """
         return self.vars
 
-    # def cnnForward(self, x, vars=None):
-    #     if vars is None:
-    #         vars = self.vars
-    #     idx = 0
-    #     with torch.no_grad():
-    #         x = self.sentence_embedding(x)  # [N*K,MAXLEN,768]
-    #     x = x.unsqueeze(dim=1)
-    #     xs = []
-    #     for _ in range(4):
-    #         w, b = vars[idx], vars[idx + 1]
-    #         x1 = F.conv2d(x, w, b)
-    #         xs.append(x1.squeeze(3))
-    #         idx += 2
-    # 
-    #     x = [F.max_pool1d(i, kernel_size=i.size(2)).squeeze(2) for i in xs]  # x[idx]: batch_size x filter_num
-    #     sentence_features = torch.cat(x, dim=1)  # batch_size x (filter_num * len(filters))
-    #     x = self.dropout(sentence_features)
-    # 
-    #     w, b = vars[idx], vars[idx + 1]
-    #     x = F.linear(x, w, b)
-    #     idx += 2
-    # 
-    #     # # make sure variable is used properly
-    #     assert idx == len(vars)
-    # 
-    #     return x
     def cnnForward(self, x, vars=None):
+        if vars is None:
+            vars = self.vars
+        idx = 0
+        with torch.no_grad():
+            x = self.sentence_embedding(x)  # [N*K,MAXLEN,768]
+        x = x.unsqueeze(dim=1)
+        xs = []
+        for _ in range(4):
+            w, b = vars[idx], vars[idx + 1]
+            x1 = F.conv2d(x, w, b)
+            xs.append(x1.squeeze(3))
+            idx += 2
+
+        x = [F.max_pool1d(i, kernel_size=i.size(2)).squeeze(2) for i in xs]  # x[idx]: batch_size x filter_num
+        sentence_features = torch.cat(x, dim=1)  # batch_size x (filter_num * len(filters))
+        x = self.dropout(sentence_features)
+
+        w, b = vars[idx], vars[idx + 1]
+        x = F.linear(x, w, b)
+        idx += 2
+
+        # # make sure variable is used properly
+        assert idx == len(vars)
+
+        return x
+
+    def pcnnForward(self, x, vars=None):
         if vars is None:
             vars = self.vars
         idx = 0
@@ -241,7 +185,7 @@ class BertLearner(nn.Module):
         for _ in range(len(self.filter_sizes)):
             w, b = vars[idx], vars[idx + 1]
             x1 = F.conv2d(x, w, b)  # [B, filter_num, maxlen-filtersize+1, 1]
-            x1 = x1.squeeze(3)  #  [B, filter_num, maxlen-filtersize+1]
+            x1 = x1.squeeze(3)  # [B, filter_num, maxlen-filtersize+1]
             idx += 2
             data = []
             for i, item in enumerate(x1):  # item [filter_num,maxlen-filtersize+1]
@@ -263,7 +207,6 @@ class BertLearner(nn.Module):
                     print("et:", et)
                 data.append(torch.cat([head, mid, tail], dim=2).reshape(1, -1))  # [1,filter_num*3]
             xs.append(torch.cat(data, dim=0))  # data[idx]: [B, filter_num*3]
-
         sentence_features = torch.cat(xs, dim=1)  # batch_size x (filter_num * len(filters)*3)
 
         x = self.dropout(sentence_features)  # [B,filter_num * len(filters)*3]
@@ -310,105 +253,36 @@ class BertLearner(nn.Module):
 
         return x
 
+class Learner():
+    pass
 
-class AlbertLearner(nn.Module):
-
-    def __init__(self, max_length, n_way):
-        nn.Module.__init__(self)
-        self.max_length = max_length
-        pretrain_path = './pretrain/albert-base-v2/'
-        self.sentence_embedding = network.embedding.ALBERTSentenceEmbedding(pretrain_path=pretrain_path,
-                                                                            max_length=self.max_length)
-        self.vars = nn.ParameterList()
-        self.n_way = n_way
-        self.feature_dim = 768
-        self.filter_num = 128
-        self.concat = False
-        # kernel size = 2
-        # [ch_out, ch_in, kernelsz, kernelsz]
-        if not self.concat:
-            # CNN
-            for filter_size in [2, 3, 4, 5]:
-                w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim))  # [64,1,3,3]]
-                torch.nn.init.kaiming_normal_(w)
-                self.vars.append(w)
-                self.vars.append(nn.Parameter(torch.zeros(self.filter_num)))
-
-            filter_dim = self.filter_num * len([2, 3, 4, 5])
-            labels_num = self.n_way
-
-            # dropout
-            self.dropout = nn.Dropout(0.5)
-
-            # linear
-            w = nn.Parameter(torch.ones(labels_num, filter_dim))
-            self.linear = nn.Linear(filter_dim, labels_num)
-            torch.nn.init.kaiming_normal_(w)
-            self.vars.append(w)
-            # [ch_out]
-            self.vars.append(nn.Parameter(torch.zeros(labels_num)))
-
-        # linear
-        if self.concat:
-            w = nn.Parameter(torch.ones(self.n_way, 1536))
-            self.linear = nn.Linear(1536, self.n_way)
-            torch.nn.init.kaiming_normal_(w)
-            self.vars.append(w)
-            self.vars.append(nn.Parameter(torch.zeros(self.n_way)))
-
-    def forward(self, x, vars=None):
-        '''
-        :param x: [1,N,K,MAXLEN*3]
-        :param vars:
-        :return:
-        '''
-        if vars is None:
-            vars = self.vars
-        idx = 0
-        with torch.no_grad():
-            x = self.sentence_embedding(x, concat=self.concat)  # [N*K,MAXLEN,60]  [N*K,1536]
-
-        if not self.concat:
-            x = x.unsqueeze(dim=1)
-            xs = []
-            for _ in range(4):
-                w, b = vars[idx], vars[idx + 1]
-                x1 = F.conv2d(x, w, b)
-                xs.append(x1.squeeze(3))
-                idx += 2
-
-            x = [F.max_pool1d(i, kernel_size=i.size(2)).squeeze(2) for i in xs]  # x[idx]: batch_size x filter_num
-            sentence_features = torch.cat(x, dim=1)  # batch_size x (filter_num * len(filters))
-            x = self.dropout(sentence_features)
-
-        w, b = vars[idx], vars[idx + 1]
-        x = F.linear(x, w, b)
-        idx += 2
-
-        # # make sure variable is used properly
-        assert idx == len(vars)
-
-        return x
-
-    def zero_grad(self, vars=None):
-        """
-
-        :param vars:
-        :return:
-        """
-        with torch.no_grad():
-            if vars is None:
-                for p in self.vars:
-                    if p.grad is not None:
-                        p.grad.zero_()
-            else:
-                for p in vars:
-                    if p.grad is not None:
-                        p.grad.zero_()
-
-    def parameters(self):
-        """
-        override this function since initial parameters will return with a generator.
-        :return:
-        """
-        return self.vars
+# from transformers.modeling_bert import BertPreTrainedModel
+#
+#
+# class Learner(BertPreTrainedModel):
+#
+#     def __init__(self, config):
+#         super(Learner, self).__init__(config)
+#         self.num_labels = config.num_labels
+#
+#         self.bert = BertModel(config)
+#         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+#         self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
+#
+#         self.init_weights()
+#
+#     def forward(self, x, vars = None):
+#         # if vars is None:
+#         #     vars = self.vars
+#         # x = x.view(-1, self.max_length * 2)
+#         word, mask = x.chunk(2, 1)  # [5,5,128]
+#         inputs = {'word': word, 'mask': mask}
+#         del word,mask
+#         outputs ,pooled_output = self.bert(inputs['word'], attention_mask=inputs['mask']) # x [N*K,MAXLEN,768]
+#
+#         pooled_output = self.dropout(pooled_output)
+#         logits = self.classifier(pooled_output)
+#         # x = x.permute(1,0,2)[0] # x [N*K, 768]
+#
+#
+#         return logits
