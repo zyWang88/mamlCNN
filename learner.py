@@ -4,9 +4,10 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 from transformers.modeling_bert import BertModel
-
+import math
 import pdb
 import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,34 +60,32 @@ class BertLearner(nn.Module):
             self.vars.append(w)
             self.vars.append(nn.Parameter(torch.zeros(labels_num)))
 
-        elif self.type=='cnnLinear':
+        elif self.type == 'cnnLinear':
             # *************attention*****************
-            # [N*K,MAXLEN,768]
-            # w_omega = (torch.zeros(self.hidden_size * self.layer_size, self.attention_size))
-            # u_omega = Variable(torch.zeros(self.attention_size))
-
-
+            self.vars.append(nn.Parameter(torch.zeros(self.max_length, self.feature_dim), requires_grad=True))
+            # *************conv*********************
             # kernel size = 2
             # [ch_out, ch_in, kernelsz, kernelsz]
             for filter_size in [2, 3, 4, 5]:
-                w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim),requires_grad=True)  # [64,1,3,3]]
+                w = nn.Parameter(torch.ones(self.filter_num, 1, filter_size, self.feature_dim),
+                                 requires_grad=True)  # [64,1,3,3]]
                 torch.nn.init.kaiming_normal_(w)
                 self.vars.append(w)
-                self.vars.append(nn.Parameter(torch.zeros(self.filter_num),requires_grad=True))
+                self.vars.append(nn.Parameter(torch.zeros(self.filter_num), requires_grad=True))
 
             filter_dim = self.filter_num * len([2, 3, 4, 5])
-            labels_num = self.n_way 
+            labels_num = self.n_way
 
             # dropout
             self.dropout = nn.Dropout(0.5)
 
             # linear
-            w = nn.Parameter(torch.ones(labels_num, filter_dim),requires_grad=True)
+            w = nn.Parameter(torch.ones(labels_num, filter_dim), requires_grad=True)
             self.linear = nn.Linear(filter_dim, labels_num)
             torch.nn.init.kaiming_normal_(w)
             self.vars.append(w)
             # [ch_out]
-            self.vars.append(nn.Parameter(torch.zeros(labels_num),requires_grad=True))
+            self.vars.append(nn.Parameter(torch.zeros(labels_num), requires_grad=True))
 
         # linear
         elif self.type == "concatLinear":
@@ -115,7 +114,7 @@ class BertLearner(nn.Module):
         if self.type == "pcnnLinear":
             return self.pcnnForward(x, vars)
         elif self.type == "cnnLinear":
-            return self.cnnForward(x,vars)
+            return self.cnnForward(x, vars)
         elif self.type == "concatLinear:":
             return self.concatForward((x, vars))
         elif self.type == "clsLinear":
@@ -144,13 +143,48 @@ class BertLearner(nn.Module):
         """
         return self.vars
 
+    def attention_net(self, query, key, value, vars=None, mask=None, dropout=0.1):
+        # x_input [N*K,MAXLEN,768]
+        if vars == None:
+            vars = self.vars
+        # w_omega = vars[0]
+        # u_omega = vars[1]
+        # x = x_input.permute(1, 0, 2)  # [MAXLEN, N*K, 768]
+        #
+        # output_reshape = torch.Tensor.reshape(x, [-1,self.feature_dim]) # (squence_length * batch_size, feature_dim)
+        # attn_tanh = torch.tanh(torch.mm(output_reshape, w_omega)) # (squence_length * batch_size, attention_size)
+        # attn_hidden_layer = torch.mm(attn_tanh, torch.Tensor.reshape(u_omega, [-1, 1])) # (squence_length * batch_size, 1)
+        # exps = torch.Tensor.reshape(torch.exp(attn_hidden_layer), [-1, self.max_length]) # (batch_size, squence_length)
+        # alphas = exps / torch.Tensor.reshape(torch.sum(exps, 1), [-1, 1]) # (batch_size, squence_length)
+        # alphas_reshape = torch.Tensor.reshape(alphas, [-1, self.max_length, 1]) # (batch_size, squence_length, 1)
+        # state = x.permute(1, 0, 2) # (batch_size, squence_length, feature_dim)
+        # # print("state's shape: ",state.shape)
+        # # print("alphas_reshape's shape:", alphas_reshape.shape)
+        # attn_output = state * alphas_reshape # (batch_size, squence_length, feature_dim)
+        # # print("attn_output's shape:",attn_output.shape)
+        # # attn_output = torch.sum(state * alphas_reshape, 1) # (batch_size,feature_dim)
+        d_k = key.size(-1)  # get the size of the key
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+        # fill attention weights with 0s where padded
+        if mask is not None: scores = scores.masked_fill(mask, 0)
+        p_attn = F.softmax(scores, dim=-1)
+        if dropout is not None:
+            p_attn = F.dropout(p_attn)
+        output = torch.matmul(p_attn, value)
+        return output
+        # return attn_output
+
     def cnnForward(self, x, vars=None):
         if vars is None:
             vars = self.vars
         idx = 0
         with torch.no_grad():
-            x = self.sentence_embedding(x)  # [N*K,MAXLEN,768]
-        x = x.unsqueeze(dim=1)
+            x = self.sentence_embedding(x)  # ( N*K,MAXLEN,feature_dim)
+        ## attention
+        x = self.attention_net(vars[0], x, x)
+        idx = 1
+
+        x = x.unsqueeze(dim=1)  # [N*K,1,MAXLEN,768]
         xs = []
         for _ in range(4):
             w, b = vars[idx], vars[idx + 1]
@@ -252,6 +286,7 @@ class BertLearner(nn.Module):
         assert idx == len(vars)
 
         return x
+
 
 class Learner():
     pass

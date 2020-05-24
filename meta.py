@@ -52,7 +52,7 @@ class Meta(nn.Module):
             loss = F.cross_entropy(logits, y_spt[i].long())
             grad = torch.autograd.grad(loss, self.net.parameters())
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
-
+            # pdb.set_trace()
             # this is the loss and accuracy before first update
             with torch.no_grad():
                 # [setsz, nway]
