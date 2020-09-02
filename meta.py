@@ -5,15 +5,18 @@ from torch import optim
 import numpy as np
 import pdb
 from copy import deepcopy
-from learner import BertLearner,Learner
+from learner import BertLearner, Learner
 import logging
+
 logger = logging.getLogger(__name__)
+
 
 class Meta(nn.Module):
     """
     Meta Learner
     """
-    def __init__(self,args,glove_mat=None,glove_word2id=None):
+
+    def __init__(self, args, glove_mat=None, glove_word2id=None):
         super(Meta, self).__init__()
         self.update_lr = args.update_lr
         self.meta_lr = args.meta_lr
@@ -25,14 +28,16 @@ class Meta(nn.Module):
         self.update_step_test = args.update_step_test
         if args.embedding == 'glove':
             print("loading glove embedding")
-            self.net = Learner(glove_mat,glove_word2id,args)  # 弃用
+            self.net = Learner(glove_mat, glove_word2id, args)  # 弃用
         elif args.embedding == 'bert':
             print("loading bert embedding")
-            self.net = BertLearner(args.max_length,args.n_way,args.type)
+            self.net = BertLearner(args.max_length, args.n_way, args.type)
+        self.count = 0
         # else:
         #     print("loading albert embedding")
         #     self.net = AlbertLearner(args.max_length,args.n_way)
-        self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  #换成SGD
+        self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)  # 换成SGD
+
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
 
@@ -52,7 +57,11 @@ class Meta(nn.Module):
             loss = F.cross_entropy(logits, y_spt[i].long())
             grad = torch.autograd.grad(loss, self.net.parameters())
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
-            # pdb.set_trace()
+            # if (not_print == 0 and i == task_num - 1):
+            #     # pdb.set_trace()
+            #     print("grad*self.update_lr:", (grad[0] * self.update_lr)[0][:100])
+            #     print("vars[0]", self.net.vars[0][0][:100])
+            #     self.count += 1
             # this is the loss and accuracy before first update
             with torch.no_grad():
                 # [setsz, nway]
@@ -102,7 +111,8 @@ class Meta(nn.Module):
         # torch.nn.utils.clip_grad_value_(self.net.parameters(),)
         self.meta_optim.step()
         accs = np.array(corrects) / (querysz * task_num)
-        return accs,loss_q.item()
+        return accs, loss_q.item()
+
     def finetunning(self, x_spt, y_spt, x_qry, y_qry):
         """
 
@@ -167,7 +177,7 @@ class Meta(nn.Module):
         accs = np.array(corrects) / querysz
         return accs
 
-    def evaluate(self,x_spt, y_spt, x_qry):
+    def evaluate(self, x_spt, y_spt, x_qry):
         """
 
         :param x_spt:   [N, K, MAXLEN*3]
@@ -181,7 +191,7 @@ class Meta(nn.Module):
         # in order to not ruin the state of running_mean/variance and bn_weight/bias
         # we finetunning on the copied model instead of self.net
         logits_qs = 0
-        for  _ in range(3):
+        for _ in range(3):
             net = deepcopy(self.net)
             net.eval()
             # 1. run the i-th task and compute loss for k=0
@@ -189,7 +199,6 @@ class Meta(nn.Module):
             loss = F.cross_entropy(logits, y_spt.long())
             grad = torch.autograd.grad(loss, net.parameters())
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, net.parameters())))
-
 
             for k in range(1, self.update_step_test):
                 # 1. run the i-th task and compute loss for k=1~K-1
@@ -201,7 +210,7 @@ class Meta(nn.Module):
                 fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
 
                 logits_q = net(x_qry, fast_weights)
-                logits_qs+=F.softmax(logits_q, dim=1)
+                logits_qs += F.softmax(logits_q, dim=1)
                 # loss_q will be overwritten and just keep the loss_q on last update step.
                 # loss_q = F.cross_entropy(logits_q, y_qry.long())
         del net

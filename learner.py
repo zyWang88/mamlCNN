@@ -29,6 +29,8 @@ class BertLearner(nn.Module):
         self.feature_dim = 768
         self.filter_num = 128
         self.type = type
+
+        self.attention = False
         # kernel size = 2
         # [ch_out, ch_in, kernelsz, kernelsz]
         if type == "pcnnLinear":
@@ -62,7 +64,17 @@ class BertLearner(nn.Module):
 
         elif self.type == 'cnnLinear':
             # *************attention*****************
-            self.vars.append(nn.Parameter(torch.zeros(self.max_length, self.feature_dim), requires_grad=True))
+
+            if self.attention:
+                w = nn.Parameter(torch.ones(self.feature_dim, self.feature_dim), requires_grad=True)
+                # self.linear = nn.Linear(filter_dim, labels_num)
+                torch.nn.init.kaiming_normal_(w)
+                self.vars.append(w)
+                self.vars.append(nn.Parameter(torch.zeros(self.feature_dim), requires_grad=True))
+
+                w = nn.Parameter(torch.ones(1, self.feature_dim), requires_grad=True)
+                torch.nn.init.kaiming_normal_(w)
+                self.vars.append(w)
             # *************conv*********************
             # kernel size = 2
             # [ch_out, ch_in, kernelsz, kernelsz]
@@ -81,7 +93,7 @@ class BertLearner(nn.Module):
 
             # linear
             w = nn.Parameter(torch.ones(labels_num, filter_dim), requires_grad=True)
-            self.linear = nn.Linear(filter_dim, labels_num)
+            # self.linear = nn.Linear(filter_dim, labels_num)
             torch.nn.init.kaiming_normal_(w)
             self.vars.append(w)
             # [ch_out]
@@ -143,26 +155,12 @@ class BertLearner(nn.Module):
         """
         return self.vars
 
-    def attention_net(self, query, key, value, vars=None, mask=None, dropout=0.1):
-        # x_input [N*K,MAXLEN,768]
-        if vars == None:
-            vars = self.vars
-        # w_omega = vars[0]
-        # u_omega = vars[1]
-        # x = x_input.permute(1, 0, 2)  # [MAXLEN, N*K, 768]
-        #
-        # output_reshape = torch.Tensor.reshape(x, [-1,self.feature_dim]) # (squence_length * batch_size, feature_dim)
-        # attn_tanh = torch.tanh(torch.mm(output_reshape, w_omega)) # (squence_length * batch_size, attention_size)
-        # attn_hidden_layer = torch.mm(attn_tanh, torch.Tensor.reshape(u_omega, [-1, 1])) # (squence_length * batch_size, 1)
-        # exps = torch.Tensor.reshape(torch.exp(attn_hidden_layer), [-1, self.max_length]) # (batch_size, squence_length)
-        # alphas = exps / torch.Tensor.reshape(torch.sum(exps, 1), [-1, 1]) # (batch_size, squence_length)
-        # alphas_reshape = torch.Tensor.reshape(alphas, [-1, self.max_length, 1]) # (batch_size, squence_length, 1)
-        # state = x.permute(1, 0, 2) # (batch_size, squence_length, feature_dim)
-        # # print("state's shape: ",state.shape)
-        # # print("alphas_reshape's shape:", alphas_reshape.shape)
-        # attn_output = state * alphas_reshape # (batch_size, squence_length, feature_dim)
-        # # print("attn_output's shape:",attn_output.shape)
-        # # attn_output = torch.sum(state * alphas_reshape, 1) # (batch_size,feature_dim)
+    def self_attention_net(self, query, key, value, vars=None, mask=None, dropout=0.1):
+        # key [B,MAXLEN,768]
+        # query [B,1,768]
+        query = torch.matmul(query, vars[0])
+        key = torch.matmul(key, vars[1])
+        value = torch.matmul(value, vars[2])
         d_k = key.size(-1)  # get the size of the key
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
         # fill attention weights with 0s where padded
@@ -172,17 +170,59 @@ class BertLearner(nn.Module):
             p_attn = F.dropout(p_attn)
         output = torch.matmul(p_attn, value)
         return output
-        # return attn_output
+
+    def attention_net(self, query, key, value, dropout=0):
+        # query: (B,1,D)
+        # key,value: (B,M,D)
+        # pdb.set_trace()
+        # d_k = key.size(-1)  # get the size of the key
+        scores = torch.matmul(key, query.transpose(-2, -1))  # (B,M,1)
+        p_attn = F.softmax(scores, dim=1)  # (B,M,1)
+        # print(p_attn[0].squeeze(-1))
+        if (dropout):
+            p_attn = F.dropout(p_attn)
+        output = value * p_attn
+        return output
 
     def cnnForward(self, x, vars=None):
         if vars is None:
             vars = self.vars
-        idx = 0
+
         with torch.no_grad():
-            x = self.sentence_embedding(x)  # ( N*K,MAXLEN,feature_dim)
-        ## attention
-        x = self.attention_net(vars[0], x, x)
-        idx = 1
+            x, eh, et = self.sentence_embedding(x, return_entity=True)  # [N*K,MAXLEN,768]  et是头实体前一个标记   eh是尾实体前一个标记
+            # eh = eh
+            # et = et
+        idx = 0
+        ## *****************self-attention*****************
+        # x = self.self_attention_net(x, x, x, vars=vars)
+        # idx = 3
+        ## *************************************************
+
+        ## *****************entity-attention*****************            有bug
+        # head_entity = []
+        # for bid, i in enumerate(eh):
+        #     try:
+        #         head_entity.append(x[bid, i].unsqueeze(0))
+        #     except IndexError:
+        #         head_entity.append(x[bid, -1].unsqueeze(0))
+        #
+        # head_entity = torch.cat(head_entity, dim=0)
+        # tail_entity = []
+        # for bid, i in enumerate(et):
+        #     try:
+        #         tail_entity.append(x[bid, i].unsqueeze(0))
+        #     except IndexError:
+        #         tail_entity.append(x[bid, -1].unsqueeze(0))
+        # tail_entity = torch.cat(tail_entity, dim=0)
+        # entity = (head_entity + tail_entity) / 2
+        if self.attention:
+            w, b = vars[idx], vars[idx + 1]
+            entity = vars[idx+2]  # (1, self.feature_dim)
+            entity = F.linear(entity, w, b)
+            entity = F.relu(entity)
+            x = self.attention_net(entity.unsqueeze(1), x, x)
+            idx += 3
+        ## *************************************************
 
         x = x.unsqueeze(dim=1)  # [N*K,1,MAXLEN,768]
         xs = []
@@ -195,14 +235,14 @@ class BertLearner(nn.Module):
         x = [F.max_pool1d(i, kernel_size=i.size(2)).squeeze(2) for i in xs]  # x[idx]: batch_size x filter_num
         sentence_features = torch.cat(x, dim=1)  # batch_size x (filter_num * len(filters))
         x = self.dropout(sentence_features)
+        # x = F.relu(x)
 
         w, b = vars[idx], vars[idx + 1]
         x = F.linear(x, w, b)
+        # x = F.relu(x)
         idx += 2
-
         # # make sure variable is used properly
         assert idx == len(vars)
-
         return x
 
     def pcnnForward(self, x, vars=None):

@@ -56,18 +56,17 @@ def main():
     n_gpu = torch.cuda.device_count()
     if n_gpu > 0:
         torch.cuda.manual_seed_all(2020)
-
-
     tokenizer = Berttokenizer(max_length=args.max_length)
-
     train_data_loader = bert_getloader(args.train, tokenizer, N=args.n_way, K=args.k_spt, Q=args.k_qry,
                                        na_rate=args.na_rate, batch_size=args.task_num)
     val_data_loader = bert_getloader(args.val, tokenizer, N=args.n_way, K=args.k_spt, Q=1,
                                      batch_size=20)
-
     maml = Meta(args,device,n_gpu)
+    for name,parm in maml.named_parameters():
+        if(parm.requires_grad):
+            print(name,parm.shape)
     # maml.to(device)
-
+    # print(maml.named_parameters())
     logging.info(n_gpu)
 
 
@@ -75,13 +74,11 @@ def main():
     accses_test = []
     losses = []
     best_result = 0
-
     start = time.time()
-
     maml.to(device)
     # if torch.cuda.is_available():
-    #     # maml = nn.DataParallel(maml)
-    #     maml = maml.cuda()
+    #     #     # maml = nn.DataParallel(maml)
+    #     #     maml = maml.cuda()
     for epoch in range(args.epoch):
         for step,batch in enumerate(train_data_loader):
             if n_gpu >= 1:
@@ -124,3 +121,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+    # string = ["Hot", "Dance", "Club", "Play", "chart", ",", "along", "with", "album", "tracks", "\"", "Whammy", "Kiss", "\"", "and", "\"", "Song", "for", "a", "Future", "Generation", "\"", "."]
+    # print(" ".join(string))

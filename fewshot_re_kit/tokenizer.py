@@ -42,7 +42,7 @@ class GloveTokenizer():
 class Berttokenizer():
     def __init__(self, max_length):
         self.max_length = max_length
-        self.tokenizer = BertTokenizer.from_pretrained('./bert-base-uncased/')
+        self.tokenizer = BertTokenizer.from_pretrained('./pretrain/bert-base-uncased/')
 
     def bert_tokenize(self, raw_tokens, pos_head, pos_tail):
         # token -> index
@@ -114,3 +114,9 @@ class Alberttokenizer():
         return indexed_tokens, mask
 
 
+if __name__ == '__main__':
+    text = ["Merpati", "flight", "106", "departed", "Jakarta", "(", "CGK", ")", "on", "a", "domestic", "flight", "to", "Tanjung", "Pandan", "(", "TJQ", ")", "."]
+    head =  [16]
+    tail = [13, 14]
+    tokenizer = Berttokenizer(64)
+    print(tokenizer.bert_tokenize(text,head,tail))
